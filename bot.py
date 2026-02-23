@@ -1,132 +1,160 @@
 import os
 import logging
-import asyncio
-from datetime import datetime, timezone
-
-# python-telegram-bot imports
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from datetime import datetime, timedelta
+from telegram import Update
 from telegram.ext import (
     Application,
     CommandHandler,
+    MessageHandler,
+    filters,
     ContextTypes,
+    ConversationHandler,
     PicklePersistence
 )
-from telegram.error import Forbidden, BadRequest
 
 # Enable logging
 logging.basicConfig(
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", 
-    level=logging.INFO
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO
 )
 logger = logging.getLogger(__name__)
 
 # --- CONFIGURATION ---
 TOKEN = os.environ.get("TELEGRAM_TOKEN")
 PORT = int(os.environ.get("PORT", "8443"))
-WEBHOOK_URL = os.environ.get("RENDER_EXTERNAL_URL") 
-TARGET_BOT = "@megax_asia_bot"
+WEBHOOK_URL = os.environ.get("RENDER_EXTERNAL_URL")
 
-# --- NOTIFICATION CONTENT ---
-REMINDER_TEXT = (
-    "🔥 **THE GAME IS HOT!** 🔥\n\n"
-    "Amazing animations and massive jackpots are waiting for you right now. "
-    "Don't miss out on your winning streak! 🎰✨\n\n"
-    "🚀 **WIN NOW at @megax_asia_bot**"
-)
+# Conversation States
+Q1, Q2, Q3, Q4, Q5 = range(5)
+
+# --- QUESTIONS with Emojis ---
+QUESTIONS = [
+    "🎯 **Question 1/5:** What is your primary goal with digital marketing? (e.g., Brand Awareness 📢, Sales 💰, Leads 📝)",
+    "💸 **Question 2/5:** What is your approximate monthly budget for ads? (e.g., $500, $5k, $10k+)",
+    "📱 **Question 3/5:** Which social media platform is your target audience most active on? (Instagram, TikTok, LinkedIn, etc.)",
+    "🌐 **Question 4/5:** Do you currently have a website or landing page? (Yes/No – tell us a bit about it!)",
+    "⏳ **Question 5/5:** How many years of experience do you have in your industry? (e.g., 2 years, just starting 🆕, veteran 🏆)"
+]
 
 # --- HANDLERS ---
-
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Welcomes the user and registers them for the 6-hour broadcast."""
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Starts the conversation with a warm welcome and checks weekly limit."""
     user = update.effective_user
-    chat_id = update.effective_chat.id
+    user_data = context.user_data
 
-    # 1. Store the user's chat_id in bot_data for broadcasting
-    # Using a set to avoid duplicates
-    if "user_list" not in context.bot_data:
-        context.bot_data["user_list"] = set()
-    
-    context.bot_data["user_list"].add(chat_id)
+    # Check for Weekly Limit
+    last_completed = user_data.get("last_completed_date")
 
-    # 2. Send the Welcome/Redirect message
-    keyboard = [[InlineKeyboardButton("🎰 CLICK HERE TO WIN NOW", url=f"https://t.me/{TARGET_BOT[1:]}")]]
-    reply_markup = InlineKeyboardMarkup(keyboard)
+    if last_completed:
+        time_since_last = datetime.now() - last_completed
+        days_remaining = 7 - time_since_last.days
+        if time_since_last < timedelta(days=7):
+            await update.message.reply_text(
+                f"⏳ **Hold on,** {user.first_name}! You've already completed the challenge this week.\n"
+                f"Come back in **{days_remaining} day{'s' if days_remaining != 1 else ''}** for a fresh set of questions. 🌟"
+            )
+            return ConversationHandler.END
 
+    welcome_msg = (
+        f"👋 **Hello {user.first_name}!** Welcome to the **Digital Marketing Challenge**!\n\n"
+        "I'm your marketing assistant 🤖, and I'll ask you **5 fun questions** to understand your needs better.\n"
+        "Answer each one, and at the end, I'll summarize your profile.\n\n"
+        "Ready? Let's dive in! 🚀\n\n"
+        f"{QUESTIONS[0]}"
+    )
+    await update.message.reply_text(welcome_msg, parse_mode='Markdown')
+    return Q1
+
+async def answer_q1(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Stores first answer and moves to Q2 with encouragement."""
+    context.user_data['q1_answer'] = update.message.text
     await update.message.reply_text(
-        f"👋 Welcome to **MegaX Asia Assistance Bot**!\n\n"
-        f"Please click the bot below to start winning and earn jackpots. "
-        f"The game is live with amazing animations! 💰✨",
-        reply_markup=reply_markup,
-        parse_mode="Markdown"
+        f"✅ Got it! Great start. Now, next question:\n\n{QUESTIONS[1]}",
+        parse_mode='Markdown'
+    )
+    return Q2
+
+async def answer_q2(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    context.user_data['q2_answer'] = update.message.text
+    await update.message.reply_text(
+        f"💰 Thanks for sharing! Budget is key. Moving on...\n\n{QUESTIONS[2]}",
+        parse_mode='Markdown'
+    )
+    return Q3
+
+async def answer_q3(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    context.user_data['q3_answer'] = update.message.text
+    await update.message.reply_text(
+        f"📱 Awesome! Knowing your audience's platform is half the battle.\n\n{QUESTIONS[3]}",
+        parse_mode='Markdown'
+    )
+    return Q4
+
+async def answer_q4(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    context.user_data['q4_answer'] = update.message.text
+    await update.message.reply_text(
+        f"🌐 Perfect! Almost there – just one more question.\n\n{QUESTIONS[4]}",
+        parse_mode='Markdown'
+    )
+    return Q5
+
+async def answer_q5(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Stores final answer, saves completion time, and presents a vibrant summary."""
+    context.user_data['q5_answer'] = update.message.text
+    context.user_data['last_completed_date'] = datetime.now()
+
+    answers = context.user_data
+    summary = (
+        f"🎉 **Challenge Completed!** 🎉\n\n"
+        f"Here's your marketing profile snapshot:\n\n"
+        f"🎯 **Goal:** {answers.get('q1_answer')}\n"
+        f"💸 **Budget:** {answers.get('q2_answer')}\n"
+        f"📱 **Platform:** {answers.get('q3_answer')}\n"
+        f"🌐 **Website:** {answers.get('q4_answer')}\n"
+        f"⏳ **Experience:** {answers.get('q5_answer')}\n\n"
+        f"✨ *You're all set for this week!* ✨\n"
+        f"Come back in 7 days for a new challenge. Until then, keep crushing your marketing goals! 💪🚀"
     )
 
-async def broadcast_reminder(context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Global job that sends the reminder to all registered users every 6 hours."""
-    user_list = context.bot_data.get("user_list", set())
-    
-    if not user_list:
-        return
+    await update.message.reply_text(summary, parse_mode='Markdown')
+    return ConversationHandler.END
 
-    logger.info(f"Starting broadcast to {len(user_list)} users.")
-    
-    keyboard = [[InlineKeyboardButton("🔥 PLAY & WIN NOW", url=f"https://t.me/{TARGET_BOT[1:]}")]]
-    reply_markup = InlineKeyboardMarkup(keyboard)
-
-    for chat_id in list(user_list):
-        try:
-            await context.bot.send_message(
-                chat_id=chat_id,
-                text=REMINDER_TEXT,
-                reply_markup=reply_markup,
-                parse_mode="Markdown"
-            )
-            # Small delay to respect Telegram's rate limits (30 messages per second)
-            await asyncio.sleep(0.05) 
-        except Forbidden:
-            # User blocked the bot, remove them from the list
-            user_list.remove(chat_id)
-            logger.info(f"Removed user {chat_id} (Bot blocked)")
-        except BadRequest as e:
-            logger.error(f"Error sending to {chat_id}: {e}")
-        except Exception as e:
-            logger.error(f"Unexpected error for {chat_id}: {e}")
+async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Cancels the conversation politely."""
+    await update.message.reply_text(
+        "❌ **Operation cancelled.** No worries – you can start over anytime with /start. 😊"
+    )
+    return ConversationHandler.END
 
 def main() -> None:
-    """Sets up and runs the bot."""
     if not TOKEN:
-        logger.error("No TELEGRAM_TOKEN found in environment variables.")
+        logger.error("Error: TELEGRAM_TOKEN environment variable is missing.")
         return
 
-    # Initialize Persistence (stores user_list across restarts)
-    persistence = PicklePersistence(filepath="bot_persistence.pickle")
+    persistence = PicklePersistence(filepath="bot_data.pickle")
+    application = Application.builder().token(TOKEN).persistence(persistence).build()
 
-    # Build the Application
-    application = (
-        Application.builder()
-        .token(TOKEN)
-        .persistence(persistence)
-        .build()
+    conv_handler = ConversationHandler(
+        entry_points=[CommandHandler("start", start)],
+        states={
+            Q1: [MessageHandler(filters.TEXT & ~filters.COMMAND, answer_q1)],
+            Q2: [MessageHandler(filters.TEXT & ~filters.COMMAND, answer_q2)],
+            Q3: [MessageHandler(filters.TEXT & ~filters.COMMAND, answer_q3)],
+            Q4: [MessageHandler(filters.TEXT & ~filters.COMMAND, answer_q4)],
+            Q5: [MessageHandler(filters.TEXT & ~filters.COMMAND, answer_q5)],
+        },
+        fallbacks=[CommandHandler("cancel", cancel)],
     )
+    application.add_handler(conv_handler)
 
-    # Add /start handler
-    application.add_handler(CommandHandler("start", start))
-
-    # Schedule the Global Broadcast Job (Every 6 hours)
-    # 21600 seconds = 6 hours
-    job_queue = application.job_queue
-    job_queue.run_repeating(broadcast_reminder, interval=21600, first=10)
-
-    # Deployment Strategy
     if WEBHOOK_URL:
-        # Webhook Mode (Production)
+        logger.info(f"Starting Webhook on Port {PORT}")
         application.run_webhook(
             listen="0.0.0.0",
             port=PORT,
-            url_path=TOKEN,
-            webhook_url=f"{WEBHOOK_URL}/{TOKEN}"
+            webhook_url=f"{WEBHOOK_URL.rstrip('/')}/{TOKEN}"
         )
     else:
-        # Polling Mode (Local)
+        logger.info("Starting Polling (Local Mode)...")
         application.run_polling()
 
 if __name__ == "__main__":
