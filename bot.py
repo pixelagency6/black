@@ -1,152 +1,161 @@
-import logging
 import os
-import sys
-import asyncio
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import Application, CommandHandler, ContextTypes, CallbackQueryHandler, MessageHandler, filters
+import logging
+from datetime import datetime, timedelta
+from telegram import Update
+from telegram.ext import (
+    Application,
+    CommandHandler,
+    MessageHandler,
+    filters,
+    ContextTypes,
+    ConversationHandler,
+    PicklePersistence
+)
 
 # Enable logging
 logging.basicConfig(
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    level=logging.INFO
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO
 )
 logger = logging.getLogger(__name__)
 
-# Get bot token from environment variable
-BOT_TOKEN = os.environ.get('BOT_TOKEN')
+# --- CONFIGURATION ---
+TOKEN = os.environ.get("TELEGRAM_TOKEN")
+# Render provides the PORT environment variable. If it exists, we are on Render.
+PORT = int(os.environ.get("PORT", "8443"))
+# Your Render App URL (e.g., https://my-bot.onrender.com). Required for Webhooks.
+WEBHOOK_URL = os.environ.get("RENDER_EXTERNAL_URL") 
 
-# Quiz Data
-QUIZ_QUESTIONS = [
-    {
-        "question": "1. What is the consensus mechanism used by Bitcoin?",
-        "options": ["Proof of Stake", "Proof of Work", "Proof of History", "Proof of Burn"],
-        "correct": 1
-    },
-    {
-        "question": "2. What is a 'Seed Phrase'?",
-        "options": ["A password for an exchange", "A list of words to recover a wallet", "The title of a crypto coin", "A transaction ID"],
-        "correct": 1
-    },
-    {
-        "question": "3. What does 'HODL' stand for in the crypto community?",
-        "options": ["Hold On for Dear Life", "High Operations Digital Ledger", "Help Others Discover Liberty", "Highly Optimized Decentralized Layer"],
-        "correct": 0
-    },
-    {
-        "question": "4. Which of these is a 'Stablecoin'?",
-        "options": ["Ethereum", "Dogecoin", "USDT", "Solana"],
-        "correct": 2
-    },
-    {
-        "question": "5. What is a 'Smart Contract'?",
-        "options": ["A physical legal document", "Self-executing code on a blockchain", "A trading bot", "A digital signature"],
-        "correct": 1
-    }
+# Conversation States
+Q1, Q2, Q3, Q4, Q5 = range(5)
+
+# --- QUESTIONS ---
+QUESTIONS = [
+    "Question 1/5: What is your primary goal with digital marketing? (e.g., Brand Awareness, Sales, Leads)",
+    "Question 2/5: What is your approximate monthly budget for ads?",
+    "Question 3/5: Which social media platform is your target audience most active on?",
+    "Question 4/5: Do you currently have a website or landing page?",
+    "Question 5/5: How many years of experience do you have in your industry?"
 ]
 
-async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Start the quiz and reset user progress"""
+# --- HANDLERS ---
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Starts the conversation if the weekly limit hasn't been reached."""
     user = update.effective_user
-    logger.info(f"User {user.id} started the quiz")
+    user_data = context.user_data
+
+    # Check for Weekly Limit
+    last_completed = user_data.get("last_completed_date")
     
-    context.user_data['score'] = 0
-    context.user_data['question_index'] = 0
-    
-    welcome_text = (
-        "👋 **Welcome to the Crypto Knowledge Test!**\n\n"
-        "I will ask you 5 questions to determine if you are a newbie or an expert.\n\n"
-        "Ready to start?"
+    if last_completed:
+        # Calculate time difference
+        time_since_last = datetime.now() - last_completed
+        days_remaining = 7 - time_since_last.days
+        
+        if time_since_last < timedelta(days=7):
+            await update.message.reply_text(
+                f"⚠️ You have already completed the challenge this week.\n"
+                f"Please come back in {days_remaining} days for a new challenge!"
+            )
+            return ConversationHandler.END
+
+    await update.message.reply_text(
+        f"👋 Hello {user.first_name}! Welcome to the Digital Marketing Challenge.\n\n"
+        "I will ask you 5 questions to assess your needs. Let's get started!\n\n"
+        f"{QUESTIONS[0]}"
     )
     
-    keyboard = [[InlineKeyboardButton("🚀 Start Quiz", callback_data="quiz_0")]]
-    reply_markup = InlineKeyboardMarkup(keyboard)
-    
-    await update.message.reply_text(welcome_text, reply_markup=reply_markup, parse_mode='Markdown')
+    return Q1
 
-async def handle_quiz(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle quiz progression and answer checking"""
-    query = update.callback_query
-    await query.answer()
-    
-    data = query.data
-    
-    # Check if this is an answer to a previous question
-    if data.startswith("ans_"):
-        parts = data.split("_")
-        q_idx = int(parts[1])
-        choice = int(parts[2])
-        
-        # Increment score if correct
-        if choice == QUIZ_QUESTIONS[q_idx]["correct"]:
-            context.user_data['score'] = context.user_data.get('score', 0) + 1
-        
-        next_q = q_idx + 1
-    else:
-        # Starting from the beginning
-        next_q = 0
+async def answer_q1(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    context.user_data['q1_answer'] = update.message.text
+    await update.message.reply_text(QUESTIONS[1])
+    return Q2
 
-    # End of quiz logic
-    if next_q >= len(QUIZ_QUESTIONS):
-        score = context.user_data.get('score', 0)
-        level = "Expert 🧠" if score >= 4 else "Newbie 🌱"
-        
-        final_text = (
-            f"✅ **Test Completed!**\n\n"
-            f"Your Score: {score}/5\n"
-            f"Assessed Level: **{level}**\n\n"
-            "━━━━━━━━━━━━━━━━━━━━\n"
-            "🙌 **Kudos for getting to test 5!**\n"
-            "📅 **New class begins next week.**\n"
-            "👋 Come back soon!\n"
-            "━━━━━━━━━━━━━━━━━━━━"
+async def answer_q2(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    context.user_data['q2_answer'] = update.message.text
+    await update.message.reply_text(QUESTIONS[2])
+    return Q3
+
+async def answer_q3(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    context.user_data['q3_answer'] = update.message.text
+    await update.message.reply_text(QUESTIONS[3])
+    return Q4
+
+async def answer_q4(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    context.user_data['q4_answer'] = update.message.text
+    await update.message.reply_text(QUESTIONS[4])
+    return Q5
+
+async def answer_q5(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    context.user_data['q5_answer'] = update.message.text
+    
+    # Save completion time
+    context.user_data['last_completed_date'] = datetime.now()
+
+    # Process and summarize the answers
+    answers = context.user_data
+    summary = (
+        f"✅ Challenge Completed!\n\n"
+        f"1. Goal: {answers.get('q1_answer')}\n"
+        f"2. Budget: {answers.get('q2_answer')}\n"
+        f"3. Platform: {answers.get('q3_answer')}\n"
+        f"4. Website: {answers.get('q4_answer')}\n"
+        f"5. Experience: {answers.get('q5_answer')}\n"
+    )
+
+    await update.message.reply_text(summary)
+    await update.message.reply_text(
+        "🎉 Thank you! You've finished this week's questions.\n"
+        "Come back next week for a new challenge."
+    )
+    return ConversationHandler.END
+
+async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    await update.message.reply_text("❌ Operation cancelled. Type /start to try again.")
+    return ConversationHandler.END
+
+def main() -> None:
+    """Run the bot."""
+    if not TOKEN:
+        logger.error("Error: TELEGRAM_TOKEN environment variable is missing.")
+        return
+
+    # Persistence: Saves user data (answers & dates) to a file.
+    # NOTE: On Render Free Tier, this file resets if the server restarts.
+    # For permanent storage, consider using MongoDB, PostgreSQL, or Redis.
+    persistence = PicklePersistence(filepath="bot_data.pickle")
+
+    # Build the Application
+    application = Application.builder().token(TOKEN).persistence(persistence).build()
+
+    # Add Conversation Handler
+    conv_handler = ConversationHandler(
+        entry_points=[CommandHandler("start", start)],
+        states={
+            Q1: [MessageHandler(filters.TEXT & ~filters.COMMAND, answer_q1)],
+            Q2: [MessageHandler(filters.TEXT & ~filters.COMMAND, answer_q2)],
+            Q3: [MessageHandler(filters.TEXT & ~filters.COMMAND, answer_q3)],
+            Q4: [MessageHandler(filters.TEXT & ~filters.COMMAND, answer_q4)],
+            Q5: [MessageHandler(filters.TEXT & ~filters.COMMAND, answer_q5)],
+        },
+        fallbacks=[CommandHandler("cancel", cancel)],
+    )
+
+    application.add_handler(conv_handler)
+
+    # --- DEPLOYMENT LOGIC ---
+    if WEBHOOK_URL:
+        # We are on Render (or a server with a public URL)
+        logger.info(f"Starting Webhook on Port {PORT}")
+        application.run_webhook(
+            listen="0.0.0.0",
+            port=PORT,
+            webhook_url=f"{WEBHOOK_URL.rstrip('/')}/{TOKEN}"
         )
-        await query.edit_message_text(final_text, parse_mode='Markdown')
-        return
+    else:
+        # We are running locally
+        logger.info("Starting Polling (Local Mode)...")
+        application.run_polling()
 
-    # Show next question
-    q_data = QUIZ_QUESTIONS[next_q]
-    keyboard = []
-    for i, option in enumerate(q_data["options"]):
-        keyboard.append([InlineKeyboardButton(option, callback_data=f"ans_{next_q}_{i}")])
-    
-    reply_markup = InlineKeyboardMarkup(keyboard)
-    await query.edit_message_text(f"📝 **Question {next_q + 1}:**\n\n{q_data['question']}", reply_markup=reply_markup, parse_mode='Markdown')
-
-async def run_bot():
-    """Start the bot asynchronously"""
-    if not BOT_TOKEN:
-        logger.critical("FATAL: BOT_TOKEN is missing!")
-        return
-
-    try:
-        application = Application.builder().token(BOT_TOKEN).build()
-        
-        application.add_handler(CommandHandler("start", start_command))
-        application.add_handler(CallbackQueryHandler(handle_quiz, pattern="^(quiz_|ans_)"))
-        
-        logger.info("Bot is now polling...")
-        await application.initialize()
-        await application.start()
-        await application.updater.start_polling(drop_pending_updates=True)
-        
-        stop_event = asyncio.Event()
-        await stop_event.wait()
-        
-    except Exception as e:
-        logger.error(f"Failed to start bot: {e}")
-    finally:
-        if 'application' in locals():
-            await application.stop()
-            await application.shutdown()
-
-def main():
-    """Main entry point"""
-    try:
-        asyncio.run(run_bot())
-    except KeyboardInterrupt:
-        logger.info("Bot stopped by user.")
-    except Exception as e:
-        logger.error(f"Main loop error: {e}")
-
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()
