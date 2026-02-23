@@ -58,7 +58,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     context.bot_data["user_list"].add(chat_id)
 
     # 2. Send the Welcome/Redirect message using the new promo text
-    keyboard = [[InlineKeyboardButton("🎰 CLICK HERE TO WIN NOW", url=f"https://t.me/{TARGET_BOT[1:]}")]]
+    keyboard = [[InlineKeyboardButton("🧧 CLAIM BONUS NOW", url=f"https://t.me/{TARGET_BOT[1:]}")]]
     reply_markup = InlineKeyboardMarkup(keyboard)
 
     await update.message.reply_text(
@@ -75,7 +75,7 @@ async def broadcast_reminder(context: ContextTypes.DEFAULT_TYPE) -> None:
 
     logger.info(f"Starting broadcast to {len(user_list)} users.")
     
-    keyboard = [[InlineKeyboardButton("🔥 PLAY & WIN NOW", url=f"https://t.me/{TARGET_BOT[1:]}")]]
+    keyboard = [[InlineKeyboardButton("🧧 CLAIM BONUS NOW", url=f"https://t.me/{TARGET_BOT[1:]}")]]
     reply_markup = InlineKeyboardMarkup(keyboard)
 
     for chat_id in list(user_list):
