@@ -61,10 +61,20 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     keyboard = [[InlineKeyboardButton("🧧 CLAIM BONUS NOW", url=f"https://t.me/{TARGET_BOT[1:]}")]]
     reply_markup = InlineKeyboardMarkup(keyboard)
 
-    await update.message.reply_text(
-        text=PROMO_TEXT,
-        reply_markup=reply_markup
-    )
+    # Attempt to send the video/gif with the text as a caption
+    try:
+        with open("Gif Bot.mp4", "rb") as media_file:
+            await update.message.reply_animation(
+                animation=media_file,
+                caption=PROMO_TEXT,
+                reply_markup=reply_markup
+            )
+    except FileNotFoundError:
+        logger.warning("Media file 'Gif Bot.mp4' not found. Sending text only.")
+        await update.message.reply_text(
+            text=PROMO_TEXT,
+            reply_markup=reply_markup
+        )
 
 async def broadcast_reminder(context: ContextTypes.DEFAULT_TYPE) -> None:
     """Global job that sends the reminder to all registered users every 6 hours."""
