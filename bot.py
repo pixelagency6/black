@@ -1,160 +1,132 @@
 import os
 import logging
-from datetime import datetime, timedelta
-from telegram import Update
+import asyncio
+from datetime import datetime, timezone
+
+# python-telegram-bot imports
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     Application,
     CommandHandler,
-    MessageHandler,
-    filters,
     ContextTypes,
-    ConversationHandler,
     PicklePersistence
 )
+from telegram.error import Forbidden, BadRequest
 
 # Enable logging
 logging.basicConfig(
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", 
+    level=logging.INFO
 )
 logger = logging.getLogger(__name__)
 
 # --- CONFIGURATION ---
 TOKEN = os.environ.get("TELEGRAM_TOKEN")
-# Render provides the PORT environment variable. If it exists, we are on Render.
 PORT = int(os.environ.get("PORT", "8443"))
-# Your Render App URL (e.g., https://my-bot.onrender.com). Required for Webhooks.
 WEBHOOK_URL = os.environ.get("RENDER_EXTERNAL_URL") 
+TARGET_BOT = "@megax_asia_bot"
 
-# Conversation States
-Q1, Q2, Q3, Q4, Q5 = range(5)
-
-# --- QUESTIONS ---
-QUESTIONS = [
-    "Question 1/5: What is your primary goal with digital marketing? (e.g., Brand Awareness, Sales, Leads)",
-    "Question 2/5: What is your approximate monthly budget for ads?",
-    "Question 3/5: Which social media platform is your target audience most active on?",
-    "Question 4/5: Do you currently have a website or landing page?",
-    "Question 5/5: How many years of experience do you have in your industry?"
-]
+# --- NOTIFICATION CONTENT ---
+REMINDER_TEXT = (
+    "🔥 **THE GAME IS HOT!** 🔥\n\n"
+    "Amazing animations and massive jackpots are waiting for you right now. "
+    "Don't miss out on your winning streak! 🎰✨\n\n"
+    "🚀 **WIN NOW at @megax_asia_bot**"
+)
 
 # --- HANDLERS ---
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """Starts the conversation if the weekly limit hasn't been reached."""
+
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Welcomes the user and registers them for the 6-hour broadcast."""
     user = update.effective_user
-    user_data = context.user_data
+    chat_id = update.effective_chat.id
 
-    # Check for Weekly Limit
-    last_completed = user_data.get("last_completed_date")
+    # 1. Store the user's chat_id in bot_data for broadcasting
+    # Using a set to avoid duplicates
+    if "user_list" not in context.bot_data:
+        context.bot_data["user_list"] = set()
     
-    if last_completed:
-        # Calculate time difference
-        time_since_last = datetime.now() - last_completed
-        days_remaining = 7 - time_since_last.days
-        
-        if time_since_last < timedelta(days=7):
-            await update.message.reply_text(
-                f"⚠️ You have already completed the challenge this week.\n"
-                f"Please come back in {days_remaining} days for a new challenge!"
-            )
-            return ConversationHandler.END
+    context.bot_data["user_list"].add(chat_id)
+
+    # 2. Send the Welcome/Redirect message
+    keyboard = [[InlineKeyboardButton("🎰 CLICK HERE TO WIN NOW", url=f"https://t.me/{TARGET_BOT[1:]}")]]
+    reply_markup = InlineKeyboardMarkup(keyboard)
 
     await update.message.reply_text(
-        f"👋 Hello {user.first_name}! Welcome to the Digital Marketing Challenge.\n\n"
-        "I will ask you 5 questions to assess your needs. Let's get started!\n\n"
-        f"{QUESTIONS[0]}"
+        f"👋 Welcome to **MegaX Asia Assistance Bot**!\n\n"
+        f"Please click the bot below to start winning and earn jackpots. "
+        f"The game is live with amazing animations! 💰✨",
+        reply_markup=reply_markup,
+        parse_mode="Markdown"
     )
+
+async def broadcast_reminder(context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Global job that sends the reminder to all registered users every 6 hours."""
+    user_list = context.bot_data.get("user_list", set())
     
-    return Q1
-
-async def answer_q1(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    context.user_data['q1_answer'] = update.message.text
-    await update.message.reply_text(QUESTIONS[1])
-    return Q2
-
-async def answer_q2(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    context.user_data['q2_answer'] = update.message.text
-    await update.message.reply_text(QUESTIONS[2])
-    return Q3
-
-async def answer_q3(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    context.user_data['q3_answer'] = update.message.text
-    await update.message.reply_text(QUESTIONS[3])
-    return Q4
-
-async def answer_q4(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    context.user_data['q4_answer'] = update.message.text
-    await update.message.reply_text(QUESTIONS[4])
-    return Q5
-
-async def answer_q5(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    context.user_data['q5_answer'] = update.message.text
-    
-    # Save completion time
-    context.user_data['last_completed_date'] = datetime.now()
-
-    # Process and summarize the answers
-    answers = context.user_data
-    summary = (
-        f"✅ Challenge Completed!\n\n"
-        f"1. Goal: {answers.get('q1_answer')}\n"
-        f"2. Budget: {answers.get('q2_answer')}\n"
-        f"3. Platform: {answers.get('q3_answer')}\n"
-        f"4. Website: {answers.get('q4_answer')}\n"
-        f"5. Experience: {answers.get('q5_answer')}\n"
-    )
-
-    await update.message.reply_text(summary)
-    await update.message.reply_text(
-        "🎉 Thank you! You've finished this week's questions.\n"
-        "Come back next week for a new challenge."
-    )
-    return ConversationHandler.END
-
-async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    await update.message.reply_text("❌ Operation cancelled. Type /start to try again.")
-    return ConversationHandler.END
-
-def main() -> None:
-    """Run the bot."""
-    if not TOKEN:
-        logger.error("Error: TELEGRAM_TOKEN environment variable is missing.")
+    if not user_list:
         return
 
-    # Persistence: Saves user data (answers & dates) to a file.
-    # NOTE: On Render Free Tier, this file resets if the server restarts.
-    # For permanent storage, consider using MongoDB, PostgreSQL, or Redis.
-    persistence = PicklePersistence(filepath="bot_data.pickle")
+    logger.info(f"Starting broadcast to {len(user_list)} users.")
+    
+    keyboard = [[InlineKeyboardButton("🔥 PLAY & WIN NOW", url=f"https://t.me/{TARGET_BOT[1:]}")]]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+
+    for chat_id in list(user_list):
+        try:
+            await context.bot.send_message(
+                chat_id=chat_id,
+                text=REMINDER_TEXT,
+                reply_markup=reply_markup,
+                parse_mode="Markdown"
+            )
+            # Small delay to respect Telegram's rate limits (30 messages per second)
+            await asyncio.sleep(0.05) 
+        except Forbidden:
+            # User blocked the bot, remove them from the list
+            user_list.remove(chat_id)
+            logger.info(f"Removed user {chat_id} (Bot blocked)")
+        except BadRequest as e:
+            logger.error(f"Error sending to {chat_id}: {e}")
+        except Exception as e:
+            logger.error(f"Unexpected error for {chat_id}: {e}")
+
+def main() -> None:
+    """Sets up and runs the bot."""
+    if not TOKEN:
+        logger.error("No TELEGRAM_TOKEN found in environment variables.")
+        return
+
+    # Initialize Persistence (stores user_list across restarts)
+    persistence = PicklePersistence(filepath="bot_persistence.pickle")
 
     # Build the Application
-    application = Application.builder().token(TOKEN).persistence(persistence).build()
-
-    # Add Conversation Handler
-    conv_handler = ConversationHandler(
-        entry_points=[CommandHandler("start", start)],
-        states={
-            Q1: [MessageHandler(filters.TEXT & ~filters.COMMAND, answer_q1)],
-            Q2: [MessageHandler(filters.TEXT & ~filters.COMMAND, answer_q2)],
-            Q3: [MessageHandler(filters.TEXT & ~filters.COMMAND, answer_q3)],
-            Q4: [MessageHandler(filters.TEXT & ~filters.COMMAND, answer_q4)],
-            Q5: [MessageHandler(filters.TEXT & ~filters.COMMAND, answer_q5)],
-        },
-        fallbacks=[CommandHandler("cancel", cancel)],
+    application = (
+        Application.builder()
+        .token(TOKEN)
+        .persistence(persistence)
+        .build()
     )
 
-    application.add_handler(conv_handler)
+    # Add /start handler
+    application.add_handler(CommandHandler("start", start))
 
-    # --- DEPLOYMENT LOGIC ---
+    # Schedule the Global Broadcast Job (Every 6 hours)
+    # 21600 seconds = 6 hours
+    job_queue = application.job_queue
+    job_queue.run_repeating(broadcast_reminder, interval=21600, first=10)
+
+    # Deployment Strategy
     if WEBHOOK_URL:
-        # We are on Render (or a server with a public URL)
-        logger.info(f"Starting Webhook on Port {PORT}")
+        # Webhook Mode (Production)
         application.run_webhook(
             listen="0.0.0.0",
             port=PORT,
-            webhook_url=f"{WEBHOOK_URL.rstrip('/')}/{TOKEN}"
+            url_path=TOKEN,
+            webhook_url=f"{WEBHOOK_URL}/{TOKEN}"
         )
     else:
-        # We are running locally
-        logger.info("Starting Polling (Local Mode)...")
+        # Polling Mode (Local)
         application.run_polling()
 
 if __name__ == "__main__":
